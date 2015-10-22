@@ -4,6 +4,7 @@ import (
 	"math"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // EWMAs continuously calculate an exponentially-weighted moving average
@@ -23,19 +24,25 @@ func NewEWMA(alpha float64) EWMA {
 	return &StandardEWMA{alpha: alpha}
 }
 
+const (
+	oneMinuteDecay     = -5.0 / 60.0 / 1
+	fiveMinuteDecay    = -5.0 / 60.0 / 5
+	fifteenMinuteDecay = -5.0 / 60.0 / 15
+)
+
 // NewEWMA1 constructs a new EWMA for a one-minute moving average.
 func NewEWMA1() EWMA {
-	return NewEWMA(1 - math.Exp(-5.0/60.0/1))
+	return NewEWMA(1 - math.Exp(oneMinuteDecay))
 }
 
 // NewEWMA5 constructs a new EWMA for a five-minute moving average.
 func NewEWMA5() EWMA {
-	return NewEWMA(1 - math.Exp(-5.0/60.0/5))
+	return NewEWMA(1 - math.Exp(fiveMinuteDecay))
 }
 
 // NewEWMA15 constructs a new EWMA for a fifteen-minute moving average.
 func NewEWMA15() EWMA {
-	return NewEWMA(1 - math.Exp(-5.0/60.0/15))
+	return NewEWMA(1 - math.Exp(fifteenMinuteDecay))
 }
 
 // EWMASnapshot is a read-only copy of another EWMA.
@@ -88,7 +95,7 @@ type StandardEWMA struct {
 func (a *StandardEWMA) Rate() float64 {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
-	return a.rate * float64(1e9)
+	return a.rate * float64(time.Second)
 }
 
 // Snapshot returns a read-only copy of the EWMA.
@@ -99,13 +106,11 @@ func (a *StandardEWMA) Snapshot() EWMA {
 // Tick ticks the clock to update the moving average.  It assumes it is called
 // every five seconds.
 func (a *StandardEWMA) Tick() {
-	count := atomic.LoadInt64(&a.uncounted)
-	atomic.AddInt64(&a.uncounted, -count)
-	instantRate := float64(count) / float64(5e9)
+	instantRate := tickEWMA(&a.uncounted)
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 	if a.init {
-		a.rate += a.alpha * (instantRate - a.rate)
+		a.rate = updateEWMARate(a.rate, a.alpha, instantRate)
 	} else {
 		a.init = true
 		a.rate = instantRate
@@ -115,4 +120,16 @@ func (a *StandardEWMA) Tick() {
 // Update adds n uncounted events.
 func (a *StandardEWMA) Update(n int64) {
 	atomic.AddInt64(&a.uncounted, n)
+}
+
+// Update the moving average by incorporating all uncounted events.
+func tickEWMA(uncounted *int64) (instantRate float64) {
+	count := atomic.LoadInt64(uncounted)
+	atomic.AddInt64(uncounted, -count)
+	return float64(count) / float64(5*time.Second)
+}
+
+// Calculate a new EWMA rate given a decay value and the current rate.
+func updateEWMARate(rate float64, alpha float64, instantRate float64) float64 {
+	return rate + alpha*(instantRate-rate)
 }
