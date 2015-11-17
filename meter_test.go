@@ -30,7 +30,8 @@ func TestMeterDecay(t *testing.T) {
 	go ma.tick()
 	m.Mark(1)
 	rateMean := m.RateMean()
-	time.Sleep(1)
+	time.Sleep(time.Millisecond)
+	ma.ticker.Stop()
 	if m.RateMean() >= rateMean {
 		t.Error("m.RateMean() didn't decrease")
 	}
